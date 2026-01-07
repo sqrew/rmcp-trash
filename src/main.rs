@@ -27,6 +27,12 @@ pub struct TrashFilesParams {
     pub paths: Vec<String>,
 }
 
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct RestoreParams {
+    #[schemars(description = "Name of the file to restore from trash (partial match supported)")]
+    pub name: String,
+}
+
 // === Server ===
 
 #[derive(Debug)]
@@ -140,6 +146,94 @@ impl TrashServer {
         {
             Ok(CallToolResult::success(vec![Content::text(
                 "list_trash is not supported on this platform (Linux/Windows only)"
+            )]))
+        }
+    }
+
+    #[rmcp::tool(description = "Restore a file from trash to its original location (Linux/Windows only)")]
+    pub async fn restore_from_trash(
+        &self,
+        Parameters(params): Parameters<RestoreParams>,
+    ) -> Result<CallToolResult, McpError> {
+        #[cfg(any(target_os = "linux", target_os = "windows"))]
+        {
+            match trash::os_limited::list() {
+                Ok(items) => {
+                    let search = params.name.to_lowercase();
+                    let matches: Vec<_> = items
+                        .into_iter()
+                        .filter(|item| {
+                            item.name.to_string_lossy().to_lowercase().contains(&search)
+                        })
+                        .collect();
+
+                    if matches.is_empty() {
+                        return Ok(CallToolResult::success(vec![Content::text(
+                            format!("No items in trash matching '{}'", params.name)
+                        )]));
+                    }
+
+                    let count = matches.len();
+                    let names: Vec<String> = matches
+                        .iter()
+                        .map(|item| item.name.to_string_lossy().into_owned())
+                        .collect();
+
+                    match trash::os_limited::restore_all(matches) {
+                        Ok(()) => Ok(CallToolResult::success(vec![Content::text(
+                            format!("Restored {} item(s): {}", count, names.join(", "))
+                        )])),
+                        Err(e) => Ok(CallToolResult::success(vec![Content::text(
+                            format!("Failed to restore: {}", e)
+                        )])),
+                    }
+                }
+                Err(e) => Ok(CallToolResult::success(vec![Content::text(
+                    format!("Failed to list trash: {}", e)
+                )])),
+            }
+        }
+
+        #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+        {
+            Ok(CallToolResult::success(vec![Content::text(
+                "restore_from_trash is not supported on this platform (Linux/Windows only)"
+            )]))
+        }
+    }
+
+    #[rmcp::tool(description = "Permanently delete all items in the trash (Linux/Windows only). This cannot be undone!")]
+    pub async fn empty_trash(&self) -> Result<CallToolResult, McpError> {
+        #[cfg(any(target_os = "linux", target_os = "windows"))]
+        {
+            match trash::os_limited::list() {
+                Ok(items) => {
+                    if items.is_empty() {
+                        return Ok(CallToolResult::success(vec![Content::text(
+                            "Trash is already empty"
+                        )]));
+                    }
+
+                    let count = items.len();
+                    match trash::os_limited::purge_all(items) {
+                        Ok(()) => Ok(CallToolResult::success(vec![Content::text(
+                            format!("Permanently deleted {} item(s) from trash", count)
+                        )])),
+                        Err(e) => Ok(CallToolResult::success(vec![Content::text(
+                            format!("Failed to empty trash: {}", e)
+                        )])),
+                    }
+                }
+                Err(e) => Ok(CallToolResult::success(vec![Content::text(
+                    format!("Failed to list trash: {}", e)
+                )])),
+            }
+        }
+
+        #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+        {
+            Ok(CallToolResult::success(vec![Content::text(
+                "empty_trash is not supported on this platform (Linux/Windows only)"
             )]))
         }
     }
